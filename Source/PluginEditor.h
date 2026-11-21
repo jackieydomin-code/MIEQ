@@ -31,6 +31,21 @@ private:
 };
 
 //==============================================================================
+// Medidor de nivel de salida (L/R)
+class LevelMeter : public juce::Component, private juce::Timer
+{
+public:
+    explicit LevelMeter (MiEQAudioProcessor&);
+    void paint (juce::Graphics&) override;
+
+private:
+    void timerCallback() override;
+
+    MiEQAudioProcessor& processor;
+    float dbL = -80.f, dbR = -80.f;
+};
+
+//==============================================================================
 class MiEQAudioProcessorEditor : public juce::AudioProcessorEditor
 {
 public:
@@ -59,6 +74,7 @@ private:
     MiEQAudioProcessor& processor;
     MiEQLookAndFeel lookAndFeel;
     ResponseCurve curve;
+    LevelMeter meter;
 
     Knob lowFreq, lowBoost, lowAtten;
     Knob hiFreq, hiBoost, hiBand;
@@ -66,8 +82,9 @@ private:
     Knob drive, output;
     std::array<Panel, 4> panels;
 
-    juce::ToggleButton msButton { "MID / SIDE" }, bypassButton { "BYPASS" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> msAttachment, bypassAttachment;
+    juce::ComboBox presetBox;
+    juce::ToggleButton autoGainButton { "AUTO VOL" }, msButton { "MID / SIDE" }, bypassButton { "BYPASS" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment, msAttachment, bypassAttachment;
 
     void setupKnob (Knob&, const juce::String& title, const juce::String& paramID,
                     juce::Colour colour, bool isChoice);

@@ -53,7 +53,10 @@ void MiEQLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b
 {
     auto r = b.getLocalBounds().toFloat().reduced (1.f);
     const bool on = b.getToggleState();
-    const auto accent = b.getButtonText() == "BYPASS" ? juce::Colour (0xffff5252) : juce::Colour (0xff4da3ff);
+
+    juce::Colour accent (0xff4da3ff);                          // MID / SIDE: azul
+    if (b.getButtonText() == "BYPASS")   accent = juce::Colour (0xffff5252);   // rojo
+    if (b.getButtonText() == "AUTO VOL") accent = juce::Colour (0xffa4e05a);   // lima
 
     g.setColour (on ? accent : juce::Colour (0xff252a3d));
     g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
@@ -164,12 +167,82 @@ void ResponseCurve::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+LevelMeter::LevelMeter (MiEQAudioProcessor& p) : processor (p)
+{
+    startTimerHz (30);
+}
+
+void LevelMeter::timerCallback()
+{
+    // Sube al instante, baja poco a poco (unos 60 dB por segundo)
+    dbL = juce::jmax (juce::Decibels::gainToDecibels (processor.takePeakL(), -80.f), dbL - 2.f);
+    dbR = juce::jmax (juce::Decibels::gainToDecibels (processor.takePeakR(), -80.f), dbR - 2.f);
+    repaint();
+}
+
+void LevelMeter::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour (juce::Colour (0xff1b2033));
+    g.fillRoundedRectangle (b, 10.f);
+
+    auto area = b.reduced (8.f, 8.f);
+    g.setColour (juce::Colours::lightgrey);
+    g.setFont (juce::FontOptions (12.f, juce::Font::bold));
+    g.drawText ("dB", area.removeFromTop (16.f), juce::Justification::centred);
+    area.removeFromTop (4.f);
+
+    auto yFor = [&area] (float db)
+    {
+        return area.getBottom() - area.getHeight() * juce::jlimit (0.f, 1.f, (db + 60.f) / 66.f);   // -60 .. +6 dB
+    };
+
+    const float barW = (area.getWidth() - 6.f) * 0.5f;
+
+    auto drawBar = [&] (float x, float db)
+    {
+        const juce::Rectangle<float> track (x, area.getY(), barW, area.getHeight());
+        g.setColour (juce::Colour (0xff10131f));
+        g.fillRoundedRectangle (track, 3.f);
+
+        const float top = yFor (db);
+        g.saveState();
+        g.reduceClipRegion (juce::Rectangle<float> (x, top, barW, area.getBottom() - top).toNearestInt());
+
+        juce::ColourGradient grad (juce::Colour (0xffff4d4d), 0.f, yFor (6.f),
+                                   juce::Colour (0xff4cd964), 0.f, yFor (-30.f), false);
+        grad.addColour (0.30, juce::Colour (0xffffd84d));
+        g.setGradientFill (grad);
+        g.fillRoundedRectangle (track, 3.f);
+        g.restoreState();
+    };
+
+    drawBar (area.getX(), dbL);
+    drawBar (area.getX() + barW + 6.f, dbR);
+
+    // Marca de 0 dB
+    g.setColour (juce::Colours::white.withAlpha (0.5f));
+    g.drawHorizontalLine ((int) yFor (0.f), area.getX(), area.getRight());
+}
+
+//==============================================================================
 MiEQAudioProcessorEditor::MiEQAudioProcessorEditor (MiEQAudioProcessor& p)
-    : AudioProcessorEditor (&p), processor (p), curve (p)
+    : AudioProcessorEditor (&p), processor (p), curve (p), meter (p)
 {
     setLookAndFeel (&lookAndFeel);
 
+    // Colores de la lista de presets
+    lookAndFeel.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff252a3d));
+    lookAndFeel.setColour (juce::ComboBox::textColourId, juce::Colours::white);
+    lookAndFeel.setColour (juce::ComboBox::outlineColourId, juce::Colour (0xff4a5070));
+    lookAndFeel.setColour (juce::ComboBox::arrowColourId, juce::Colours::white);
+    lookAndFeel.setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff1b2033));
+    lookAndFeel.setColour (juce::PopupMenu::textColourId, juce::Colours::white);
+    lookAndFeel.setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colour (0xff3a4160));
+    lookAndFeel.setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
+
     addAndMakeVisible (curve);
+    addAndMakeVisible (meter);
 
     setupKnob (lowFreq,   "Frecuencia", MiEQ::ID::lowFreq,   colLow,   true);
     setupKnob (lowBoost,  "Boost",      MiEQ::ID::lowBoost,  colLow,   false);
@@ -186,17 +259,26 @@ MiEQAudioProcessorEditor::MiEQAudioProcessorEditor (MiEQAudioProcessor& p)
     setupKnob (output,    "Salida",     MiEQ::ID::output,    colOut,   false);
     output.slider.setTextValueSuffix (" dB");
 
-    panels[0] = { "LOW  -  GRAVES",         colLow,   {} };
+    panels[0] = { "LOW  -  GRAVES",          colLow,   {} };
     panels[1] = { "HIGH BOOST  -  AGUDOS +", colHiBst, {} };
     panels[2] = { "HIGH CUT  -  AGUDOS -",   colHiCut, {} };
-    panels[3] = { "OUTPUT",                 colOut,   {} };
+    panels[3] = { "OUTPUT",                  colOut,   {} };
 
+    presetBox.setTextWhenNothingSelected ("Presets");
+    presetBox.addItemList (MiEQAudioProcessor::getPresetNames(), 1);
+    presetBox.onChange = [this] { processor.applyPreset (presetBox.getSelectedId() - 1); };
+    addAndMakeVisible (presetBox);
+
+    addAndMakeVisible (autoGainButton);
     addAndMakeVisible (msButton);
     addAndMakeVisible (bypassButton);
-    msAttachment     = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, MiEQ::ID::ms, msButton);
-    bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, MiEQ::ID::bypass, bypassButton);
+    autoGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, MiEQ::ID::autoGain, autoGainButton);
+    msAttachment       = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, MiEQ::ID::ms, msButton);
+    bypassAttachment   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, MiEQ::ID::bypass, bypassButton);
 
-    setSize (1000, 440);
+    setResizable (true, true);
+    setResizeLimits (900, 380, 1600, 800);
+    setSize (1060, 460);
 }
 
 MiEQAudioProcessorEditor::~MiEQAudioProcessorEditor()
@@ -247,8 +329,7 @@ void MiEQAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("MI EQ", header.removeFromLeft (110), juce::Justification::centredLeft);
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (13.f));
-    g.drawText ("Ecualizador pasivo estilo Pultec  -  boost y atten a la vez", header.withTrimmedLeft (10),
-                juce::Justification::centredLeft);
+    g.drawText ("Ecualizador pasivo estilo Pultec", header.withTrimmedLeft (10), juce::Justification::centredLeft);
 
     // Paneles
     for (auto& panel : panels)
@@ -276,22 +357,34 @@ void MiEQAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (16);
 
+    // Cabecera: de derecha a izquierda
     auto header = area.removeFromTop (48);
-    bypassButton.setBounds (header.removeFromRight (110).reduced (0, 10));
+    bypassButton.setBounds   (header.removeFromRight (100).reduced (0, 10));
     header.removeFromRight (8);
-    msButton.setBounds (header.removeFromRight (120).reduced (0, 10));
+    msButton.setBounds       (header.removeFromRight (115).reduced (0, 10));
+    header.removeFromRight (8);
+    autoGainButton.setBounds (header.removeFromRight (105).reduced (0, 10));
+    header.removeFromRight (8);
+    presetBox.setBounds      (header.removeFromRight (190).reduced (0, 10));
 
     area.removeFromTop (6);
-    curve.setBounds (area.removeFromTop (170));
-    area.removeFromTop (12);
+
+    // Parte baja (paneles + medidor) y gráfica arriba, que ocupa el resto
+    const int panelH = juce::jlimit (172, 300, (int) (area.getHeight() * 0.45f));
+    auto bottom = area.removeFromBottom (panelH);
+    area.removeFromBottom (12);
+    curve.setBounds (area);
+
+    meter.setBounds (bottom.removeFromRight (52));
+    bottom.removeFromRight (10);
 
     const int gap = 10;
-    const int unit = (area.getWidth() - 3 * gap) / 10;
+    const int unit = (bottom.getWidth() - 3 * gap) / 10;
     const int weights[4] = { 3, 3, 2, 2 };
     for (int i = 0; i < 4; ++i)
     {
-        panels[(size_t) i].area = (i == 3) ? area : area.removeFromLeft (unit * weights[i]);
-        area.removeFromLeft (gap);
+        panels[(size_t) i].area = (i == 3) ? bottom : bottom.removeFromLeft (unit * weights[i]);
+        bottom.removeFromLeft (gap);
     }
 
     auto layoutKnobs = [] (juce::Rectangle<int> panelArea, std::initializer_list<Knob*> knobs)

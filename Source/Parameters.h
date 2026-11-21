@@ -3,11 +3,11 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 
-// Mi EQ - EQ pasivo estilo "Reference 1956" (curvas tipo Pultec):
+// Mi EQ v1.1 - EQ pasivo estilo "Reference 1956" (curvas tipo Pultec):
 //   LOW:        shelf de graves con BOOST y ATTEN simultáneos (el "low-end trick")
 //   HIGH BOOST: campana de agudos con ancho de banda variable
 //   HIGH CUT:   shelf de atenuación de agudos
-//   + Drive (saturación suave tipo válvula), Output, Mid/Side y Bypass.
+//   + Drive (saturación suave tipo válvula), Output, Auto Volume, Mid/Side y Bypass.
 namespace MiEQ
 {
 namespace ID
@@ -22,6 +22,7 @@ namespace ID
     static const juce::String hiAtten   { "hiAtten" };
     static const juce::String drive     { "drive" };
     static const juce::String output    { "output" };
+    static const juce::String autoGain  { "autoGain" };
     static const juce::String ms        { "ms" };
     static const juce::String bypass    { "bypass" };
 }
@@ -62,6 +63,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
                                                        NormalisableRange<float> (-12.f, 12.f, 0.1f), 0.f,
                                                        AudioParameterFloatAttributes().withLabel ("dB")));
 
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ID::autoGain, 1 }, "Auto Volume", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ID::ms, 1 }, "Mid/Side", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ID::bypass, 1 }, "Bypass", false));
 
@@ -104,5 +106,36 @@ inline Coeffs makeCoeffs (const Settings& s, double sampleRate)
     c.hiBoost = C::makePeakFilter (sampleRate, clampF (s.hiFreq), q, gainFor (s.hiBoost, 16.f));
     c.hiCut   = C::makeHighShelf (sampleRate, clampF (s.hiAttFreq), 0.50f, gainFor (s.hiAtten, -16.f));
     return c;
+}
+
+// Compensación de volumen: mide cuánto sube o baja el nivel medio de la curva
+// (todas las zonas de frecuencia pesan igual en escala logarítmica, como ruido rosa)
+// y devuelve la ganancia que lo devuelve a su nivel original.
+inline float computeAutoGain (const Settings& s, double sampleRate)
+{
+    constexpr int n = 64;
+    std::array<double, n> freqs {}, mags {}, tmp {};
+    const double fMax = juce::jmin (20000.0, sampleRate * 0.49);
+
+    for (int i = 0; i < n; ++i)
+    {
+        freqs[(size_t) i] = 20.0 * std::pow (fMax / 20.0, (double) i / (n - 1));
+        mags[(size_t) i] = 1.0;
+    }
+
+    const auto c = makeCoeffs (s, sampleRate);
+    for (auto ptr : { c.lowBoost, c.lowCut, c.hiBoost, c.hiCut })
+    {
+        ptr->getMagnitudeForFrequencyArray (freqs.data(), tmp.data(), (size_t) n, sampleRate);
+        for (size_t i = 0; i < (size_t) n; ++i)
+            mags[i] *= tmp[i];
+    }
+
+    double sum = 0.0;
+    for (auto m : mags)
+        sum += m * m;
+
+    const double rms = std::sqrt (sum / n);
+    return juce::jlimit (0.25f, 4.0f, (float) (1.0 / juce::jmax (rms, 1.0e-6)));
 }
 } // namespace MiEQ

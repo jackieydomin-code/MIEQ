@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # Runtime estático: el plugin no necesita instalar los Redistributables de Visual C++
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(MiEQ VERSION 1.0.0)
+project(MiEQ VERSION 1.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

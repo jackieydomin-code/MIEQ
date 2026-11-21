@@ -18,9 +18,17 @@ Hace la misma función que un EQ pasivo clásico como el Reference 1956: curvas 
 | OUTPUT | Drive | Saturación suave tipo válvula |
 | | Salida | Volumen de salida (-12 a +12 dB) |
 | Cabecera | MID / SIDE | Procesa el centro y los laterales en vez de L/R |
+| | AUTO VOL | Compensa solo el volumen para comparar con y sin EQ al mismo nivel |
+| | Presets | Lista de ajustes de partida (voz, bombo, bajo, mezcla...) |
 | | BYPASS | Desactiva el efecto |
 
-La gráfica superior muestra en vivo la curva real que está aplicando el plugin.
+La gráfica superior muestra en vivo la curva real que está aplicando el plugin. A la derecha hay un medidor de nivel de salida (L/R) y la ventana se puede agrandar arrastrando la esquina.
+
+## Novedades de la versión 1.1
+
+- Los mandos se mueven sin chasquidos al automatizarlos.
+- Drive con saturación más limpia (menos "ruido digital" en agudos).
+- Botón AUTO VOL, lista de presets, medidor de nivel y ventana redimensionable.
 
 ## 1. Subirlo a tu GitHub
 
@@ -68,3 +76,5 @@ El resultado queda en `build\MiEQ_artefacts\Release\VST3\`.
 ## Licencia
 
 Está construido con [JUCE](https://juce.com), que es AGPLv3 o licencia comercial. Para uso personal y repositorio público no hay problema; si algún día lo vendes, necesitarás licencia comercial de JUCE.
+
+
